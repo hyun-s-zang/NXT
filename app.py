@@ -15,7 +15,7 @@ st.markdown("""
     @media (max-width: 768px) {
         /* 1. 모바일: 상단 기본 메뉴바에 가리지 않도록 안전 여백(3rem) 확보 */
         .block-container {
-            padding-top: 3rem !important; 
+            padding-top: 5rem !important; 
         }
         /* 2. 모바일: 제목 크기 축소 */
         h1 {
@@ -34,7 +34,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
+st.title("📈 초고속 NXT 실시간 대시보드")
 
 # --- [보안] 한국투자증권 API 키 ---
 try:
@@ -228,3 +228,4 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
