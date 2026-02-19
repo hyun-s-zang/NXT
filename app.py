@@ -8,25 +8,25 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 
 st.set_page_config(page_title="NXT 실시간 주가 대시보드", layout="wide")
+
+# --- 모바일 및 PC UI 여백 최적화 CSS ---
 st.markdown("""
     <style>
-    /* 모바일(화면 너비 768px 이하) 환경에만 적용되는 디자인 */
     @media (max-width: 768px) {
-        /* 1. 기본 제목(h1) 크기 대폭 축소 및 여백 제거 */
+        /* 1. 모바일: 상단 기본 메뉴바에 가리지 않도록 안전 여백(3rem) 확보 */
+        .block-container {
+            padding-top: 3rem !important; 
+        }
+        /* 2. 모바일: 제목 크기 축소 */
         h1 {
-            font-size: 20px !important;
+            font-size: 22px !important;
             padding-top: 0rem !important;
             padding-bottom: 0rem !important;
         }
-        /* 2. 앱 최상단 여백(빈 공간) 축소 */
-        .block-container {
-            padding-top: 1.5rem !important; 
-        }
-        /* 3. 지수(Metric)와 표(Table) 사이의 기본 간격(gap) 축소 */
+        /* 3. 모바일: 지수와 표 사이 여백 축소 */
         [data-testid="stVerticalBlock"] {
             gap: 0.2rem !important;
         }
-        /* 4. 지수 하단 여백 완벽 제거 */
         [data-testid="stMetric"] {
             margin-bottom: -15px !important;
         }
@@ -34,7 +34,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 안전한 Streamlit 기본 제목 사용 (위의 CSS가 모바일에서만 크기를 줄여줍니다)
 st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
 
 # --- [보안] 한국투자증권 API 키 ---
@@ -62,7 +61,7 @@ def get_access_token():
         return res.json()["access_token"]
     return None
 
-# 2. 비동기 초고속 데이터 조회 (현재가, 전일종가, 시가총액 모두 반환)
+# 2. 비동기 초고속 데이터 조회
 async def fetch_price_async(session, ticker, excel_marcap, token, sem):
     async with sem:
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
@@ -84,7 +83,6 @@ async def fetch_price_async(session, ticker, excel_marcap, token, sem):
                         diff = int(data['output']['prdy_vrss'])
                         sign = data['output']['prdy_vrss_sign']
                         
-                        # 전일 종가 역산 로직
                         if sign in ['1', '2']: 
                             diff_str = f"▲ {diff:,}"
                             prev_price = price - diff
@@ -103,29 +101,24 @@ async def fetch_price_async(session, ticker, excel_marcap, token, sem):
 async def get_all_prices_async(stock_info_list, token):
     sem = asyncio.Semaphore(15) 
     async with aiohttp.ClientSession() as session:
-        # stock_info_list는 (ticker, marcap) 형태
         tasks = [fetch_price_async(session, t, m, token, sem) for t, m in stock_info_list]
         results = await asyncio.gather(*tasks)
         return {res[0]: {"price": res[1], "prev_price": res[2], "diff": res[3], "marcap": res[4]} for res in results}
 
-# --- 메인 웹 화면 로직 ---
-default_excel_file = "지겹다_완성.xlsx"
-uploaded_file = st.file_uploader("새로운 종목 리스트로 갱신하려면 엑셀 파일을 업로드하세요.", type=["xlsx"])
-file_to_read = uploaded_file if uploaded_file is not None else default_excel_file
+# --- 메인 웹 화면 로직 (파일 업로드 창 제거 및 자동 불러오기) ---
+file_to_read = "지겹다_완성.xlsx"
 
-if not os.path.exists(default_excel_file) and uploaded_file is None:
-    st.error("기본 엑셀 파일('지겹다_완성.xlsx')을 찾을 수 없습니다.")
+if not os.path.exists(file_to_read):
+    st.error("기본 엑셀 파일('지겹다_완성.xlsx')을 찾을 수 없습니다. GitHub 저장소에 파일이 있는지 확인해 주세요.")
     st.stop()
 
 try:
     df = pd.read_excel(file_to_read, sheet_name=0)
     valid_stocks = []
-    # 엑셀 데이터 파싱 (C열: 종목명, D열: 티커, E열: 시가총액)
     for idx, row in df.iterrows():
-        if pd.notna(row.iloc[3]): # 티커가 비어있지 않은 경우
+        if pd.notna(row.iloc[3]): 
             name = str(row.iloc[2])
             ticker = str(row.iloc[3])
-            # E열에 시가총액이 있다면 가져오고, 없으면 0으로 처리
             marcap = float(row.iloc[4]) if df.shape[1] > 4 and pd.notna(row.iloc[4]) else 0
             
             if ticker != "검색불가":
@@ -145,7 +138,6 @@ if access_token:
     now = datetime.now(KST)
     is_market_open = (9 <= now.hour < 20)
     
-    # 지수와 표를 그릴 화면 공간 할당
     index_placeholder = st.empty()
     st.markdown("<hr style='margin: 5px 0px; border: 1px solid #ddd;'>", unsafe_allow_html=True)
     table_placeholder = st.empty()
@@ -167,7 +159,6 @@ if access_token:
                 prev_p = info["prev_price"]
                 m = info["marcap"]
                 
-                # 지수 산출 로직 (시가총액 또는 동일가중)
                 weight = m if m > 0 else 1 
                 if prev_p > 0:
                     base_total_value += weight
@@ -180,7 +171,6 @@ if access_token:
                     "전일대비": info["diff"]
                 })
             
-            # 지수 계산 (기준=1000)
             if base_total_value > 0:
                 nxt_index = (current_total_value / base_total_value) * 1000
                 index_diff = nxt_index - 1000
@@ -199,7 +189,7 @@ if access_token:
             
     else:
         st.error(f"🔴 장 마감 시간입니다. 최종 종가 기준으로 지수와 데이터를 불러옵니다.")
-        with st.spinner('데이터를 초고속으로 불러오는 중입니다...'):
+        with st.spinner('데이터를 불러오는 중입니다...'):
             price_dict = asyncio.run(get_all_prices_async(tickers_to_fetch, access_token))
             
             current_data = []
@@ -238,6 +228,3 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
-
-
-
