@@ -134,9 +134,9 @@ if len(valid_stocks) == 0:
 access_token = get_access_token()
 
 if access_token:
-    KST = timezone(timedelta(hours=9))
+    KST = timezone(timedelta(hours=8))
     now = datetime.now(KST)
-    is_market_open = (9 <= now.hour < 20)
+    is_market_open = (8 <= now.hour < 20)
     
     index_placeholder = st.empty()
     st.markdown("<hr style='margin: 5px 0px; border: 1px solid #ddd;'>", unsafe_allow_html=True)
@@ -228,6 +228,7 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
 
 
 
