@@ -8,7 +8,29 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 
 st.set_page_config(page_title="NXT 실시간 주가 대시보드", layout="wide")
-st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
+st.markdown("""
+    <style>
+    /* 1. PC 환경 기본 제목 크기 */
+    .main-title {
+        font-size: 28px;
+        font-weight: 800;
+        margin-bottom: 10px;
+    }
+    
+    /* 2. 모바일 환경(화면 너비 768px 이하) 설정 */
+    @media (max-width: 768px) {
+        .main-title {
+            font-size: 18px; /* 모바일 글씨 크기를 대폭 축소 */
+        }
+        /* 앱 상단의 불필요한 기본 여백을 줄여줍니다 */
+        .block-container {
+            padding-top: 2rem !important; 
+            padding-bottom: 1rem !important;
+        }
+    }
+    </style>
+    <div class="main-title">📈 초고속 NXT 실시간 대시보드 & 커스텀 지수</div>
+""", unsafe_allow_html=True)
 
 # --- [보안] 한국투자증권 API 키 ---
 try:
@@ -211,3 +233,4 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
