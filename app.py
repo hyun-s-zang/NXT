@@ -36,7 +36,6 @@ st.markdown("""
 
 # 안전한 Streamlit 기본 제목 사용 (위의 CSS가 모바일에서만 크기를 줄여줍니다)
 st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
-""", unsafe_allow_html=True)
 
 # --- [보안] 한국투자증권 API 키 ---
 try:
@@ -239,5 +238,6 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
 
 
