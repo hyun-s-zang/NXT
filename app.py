@@ -28,13 +28,13 @@ st.markdown("""
             gap: 0.2rem !important;
         }
         [data-testid="stMetric"] {
-            margin-bottom: -15px !important;
+            margin-bottom: -5px !important;
         }
     }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 초고속 NXT 실시간 대시보드")
+st.title("📈NXT 실시간 대시보드")
 
 # --- [보안] 한국투자증권 API 키 ---
 try:
@@ -228,5 +228,6 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
 
 
