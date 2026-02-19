@@ -15,13 +15,13 @@ st.markdown("""
     @media (max-width: 768px) {
         /* 1. 모바일: 상단 기본 메뉴바에 가리지 않도록 안전 여백(3.2rem) 확보 */
         .block-container {
-            padding-top: 3.2rem !important; 
+            padding-top: 3.3rem !important; 
         }
         /* 2. 모바일: 제목 크기 축소 */
         h1 {
             font-size: 22px !important;
             padding-top: 0rem !important;
-            padding-bottom: 0.3rem !important;
+            padding-bottom: 0.4rem !important;
         }
         /* 3. 모바일: 지수와 표 사이 여백 축소 */
         [data-testid="stVerticalBlock"] {
@@ -228,6 +228,7 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
 
 
 
