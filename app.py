@@ -10,26 +10,32 @@ from datetime import datetime, timedelta, timezone
 st.set_page_config(page_title="NXT 실시간 주가 대시보드", layout="wide")
 st.markdown("""
     <style>
-    /* 1. PC 환경 기본 제목 크기 */
-    .main-title {
-        font-size: 28px;
-        font-weight: 800;
-        margin-bottom: 10px;
-    }
-    
-    /* 2. 모바일 환경(화면 너비 768px 이하) 설정 */
+    /* 모바일(화면 너비 768px 이하) 환경에만 적용되는 디자인 */
     @media (max-width: 768px) {
-        .main-title {
-            font-size: 18px; /* 모바일 글씨 크기를 대폭 축소 */
+        /* 1. 기본 제목(h1) 크기 대폭 축소 및 여백 제거 */
+        h1 {
+            font-size: 20px !important;
+            padding-top: 0rem !important;
+            padding-bottom: 0rem !important;
         }
-        /* 앱 상단의 불필요한 기본 여백을 줄여줍니다 */
+        /* 2. 앱 최상단 여백(빈 공간) 축소 */
         .block-container {
-            padding-top: 2rem !important; 
-            padding-bottom: 1rem !important;
+            padding-top: 1.5rem !important; 
+        }
+        /* 3. 지수(Metric)와 표(Table) 사이의 기본 간격(gap) 축소 */
+        [data-testid="stVerticalBlock"] {
+            gap: 0.2rem !important;
+        }
+        /* 4. 지수 하단 여백 완벽 제거 */
+        [data-testid="stMetric"] {
+            margin-bottom: -15px !important;
         }
     }
     </style>
-    <div class="main-title">📈 초고속 NXT 실시간 대시보드 & 커스텀 지수</div>
+""", unsafe_allow_html=True)
+
+# 안전한 Streamlit 기본 제목 사용 (위의 CSS가 모바일에서만 크기를 줄여줍니다)
+st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
 """, unsafe_allow_html=True)
 
 # --- [보안] 한국투자증권 API 키 ---
@@ -142,7 +148,7 @@ if access_token:
     
     # 지수와 표를 그릴 화면 공간 할당
     index_placeholder = st.empty()
-    st.write("---")
+    st.markdown("<hr style='margin: 5px 0px; border: 1px solid #ddd;'>", unsafe_allow_html=True)
     table_placeholder = st.empty()
     
     tickers_to_fetch = [(t, m) for n, t, m in valid_stocks]
@@ -233,4 +239,5 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+
 
