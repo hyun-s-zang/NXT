@@ -8,7 +8,7 @@ import aiohttp
 from datetime import datetime, timedelta, timezone
 
 st.set_page_config(page_title="NXT 실시간 주가 대시보드", layout="wide")
-st.title("📈 초고속 NXT 실시간 & 종가 주가 모니터링")
+st.title("📈 초고속 NXT 실시간 대시보드 & 커스텀 지수")
 
 # --- [보안] 한국투자증권 API 키 ---
 try:
@@ -35,9 +35,9 @@ def get_access_token():
         return res.json()["access_token"]
     return None
 
-# 2. [핵심] 비동기 초고속 데이터 조회 함수 (동시에 여러 종목 조회)
-async def fetch_price_async(session, ticker, token, sem):
-    async with sem:  # API 호출 제한 방지용 세마포어
+# 2. 비동기 초고속 데이터 조회 (현재가, 전일종가, 시가총액 모두 반환)
+async def fetch_price_async(session, ticker, excel_marcap, token, sem):
+    async with sem:
         url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
         headers = {
             "Content-Type": "application/json",
@@ -46,10 +46,7 @@ async def fetch_price_async(session, ticker, token, sem):
             "appsecret": APP_SECRET,
             "tr_id": "FHKST01010100" 
         }
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": ticker       
-        }
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}
         
         try:
             async with session.get(url, headers=headers, params=params) as res:
@@ -60,21 +57,29 @@ async def fetch_price_async(session, ticker, token, sem):
                         diff = int(data['output']['prdy_vrss'])
                         sign = data['output']['prdy_vrss_sign']
                         
-                        if sign in ['1', '2']: diff_str = f"▲ {diff:,}"
-                        elif sign in ['4', '5']: diff_str = f"▼ {diff:,}"
-                        else: diff_str = "-"
-                        return ticker, f"{price:,}", diff_str
+                        # 전일 종가 역산 로직
+                        if sign in ['1', '2']: 
+                            diff_str = f"▲ {diff:,}"
+                            prev_price = price - diff
+                        elif sign in ['4', '5']: 
+                            diff_str = f"▼ {diff:,}"
+                            prev_price = price + diff
+                        else: 
+                            diff_str = "-"
+                            prev_price = price
+                            
+                        return ticker, price, prev_price, diff_str, excel_marcap
         except Exception:
             pass
-        return ticker, "0", "-"
+        return ticker, 0, 0, "-", excel_marcap
 
-async def get_all_prices_async(tickers, token):
-    # 한투 API 초당 호출 제한(초당 20건)을 고려하여 동시 접속량 조절
+async def get_all_prices_async(stock_info_list, token):
     sem = asyncio.Semaphore(15) 
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_price_async(session, ticker, token, sem) for ticker in tickers]
+        # stock_info_list는 (ticker, marcap) 형태
+        tasks = [fetch_price_async(session, t, m, token, sem) for t, m in stock_info_list]
         results = await asyncio.gather(*tasks)
-        return {res[0]: {"price": res[1], "diff": res[2]} for res in results}
+        return {res[0]: {"price": res[1], "prev_price": res[2], "diff": res[3], "marcap": res[4]} for res in results}
 
 # --- 메인 웹 화면 로직 ---
 default_excel_file = "지겹다_완성.xlsx"
@@ -82,19 +87,28 @@ uploaded_file = st.file_uploader("새로운 종목 리스트로 갱신하려면 
 file_to_read = uploaded_file if uploaded_file is not None else default_excel_file
 
 if not os.path.exists(default_excel_file) and uploaded_file is None:
-    st.error("기본 엑셀 파일('지겹다_완성.xlsx')을 찾을 수 없습니다. GitHub에 업로드해 주세요.")
+    st.error("기본 엑셀 파일('지겹다_완성.xlsx')을 찾을 수 없습니다.")
     st.stop()
 
 try:
     df = pd.read_excel(file_to_read, sheet_name=0)
-    stock_data = df.iloc[:, [2, 3]].dropna()
-    stock_list = stock_data.values.tolist()
+    valid_stocks = []
+    # 엑셀 데이터 파싱 (C열: 종목명, D열: 티커, E열: 시가총액)
+    for idx, row in df.iterrows():
+        if pd.notna(row.iloc[3]): # 티커가 비어있지 않은 경우
+            name = str(row.iloc[2])
+            ticker = str(row.iloc[3])
+            # E열에 시가총액이 있다면 가져오고, 없으면 0으로 처리
+            marcap = float(row.iloc[4]) if df.shape[1] > 4 and pd.notna(row.iloc[4]) else 0
+            
+            if ticker != "검색불가":
+                valid_stocks.append((name, ticker.zfill(6), marcap))
 except Exception as e:
-    st.error(f"엑셀 데이터를 읽는 중 문제가 발생했습니다: {e}")
+    st.error(f"엑셀 파싱 에러: {e}")
     st.stop()
 
-if len(stock_list) == 0:
-    st.warning("엑셀에서 종목명과 티커를 찾을 수 없습니다.")
+if len(valid_stocks) == 0:
+    st.warning("엑셀에서 유효한 종목명과 티커를 찾을 수 없습니다.")
     st.stop()
 
 access_token = get_access_token()
@@ -104,46 +118,96 @@ if access_token:
     now = datetime.now(KST)
     is_market_open = (9 <= now.hour < 20)
     
-    placeholder = st.empty()
+    # 지수와 표를 그릴 화면 공간 할당
+    index_placeholder = st.empty()
+    st.write("---")
+    table_placeholder = st.empty()
     
-    # 조회할 티커 리스트만 따로 추출 (검색불가 제외 및 6자리 맞춤)
-    valid_stocks = [(name, str(t).zfill(6)) for name, t in stock_list if str(t) != "검색불가"]
-    tickers_to_fetch = [t[1] for t in valid_stocks]
+    tickers_to_fetch = [(t, m) for n, t, m in valid_stocks]
     
     if is_market_open:
-        st.info(f"🟢 장 중입니다. 총 {len(valid_stocks)}개 종목을 초고속으로 갱신합니다.")
+        st.info(f"🟢 장 중입니다. 실시간 가격과 지수를 5초 단위로 갱신합니다.")
         while True:
-            # 비동기로 모든 종목 가격을 한 번에 가져옴
             price_dict = asyncio.run(get_all_prices_async(tickers_to_fetch, access_token))
             
             current_data = []
-            for stock_name, ticker in valid_stocks:
-                info = price_dict.get(ticker, {"price": "0", "diff": "-"})
+            base_total_value = 0
+            current_total_value = 0
+            
+            for stock_name, ticker, _ in valid_stocks:
+                info = price_dict.get(ticker, {"price": 0, "prev_price": 0, "diff": "-", "marcap": 0})
+                p = info["price"]
+                prev_p = info["prev_price"]
+                m = info["marcap"]
+                
+                # 지수 산출 로직 (시가총액 또는 동일가중)
+                weight = m if m > 0 else 1 
+                if prev_p > 0:
+                    base_total_value += weight
+                    current_total_value += weight * (p / prev_p)
+                
                 current_data.append({
                     "종목명": stock_name,
                     "종목코드": ticker,
-                    "현재가(원)": info["price"],
+                    "현재가(원)": f"{p:,}" if p > 0 else "0",
                     "전일대비": info["diff"]
                 })
+            
+            # 지수 계산 (기준=1000)
+            if base_total_value > 0:
+                nxt_index = (current_total_value / base_total_value) * 1000
+                index_diff = nxt_index - 1000
+                index_pct = (index_diff / 1000) * 100
+            else:
+                nxt_index, index_diff, index_pct = 1000, 0, 0
                 
-            with placeholder.container():
+            with index_placeholder.container():
+                st.metric(label="🚀 커스텀 NXT 지수 (Base: 전일종가 = 1000 pt)", 
+                          value=f"{nxt_index:,.2f} pt", 
+                          delta=f"{index_diff:+,.2f} pt ({index_pct:+.2f}%)")
+                
+            with table_placeholder.container():
                 st.dataframe(pd.DataFrame(current_data), use_container_width=True)
             time.sleep(5)
             
     else:
-        st.error(f"🔴 장 마감 시간입니다. (현재 시각: {now.strftime('%H:%M')})")
+        st.error(f"🔴 장 마감 시간입니다. 최종 종가 기준으로 지수와 데이터를 불러옵니다.")
         with st.spinner('데이터를 초고속으로 불러오는 중입니다...'):
             price_dict = asyncio.run(get_all_prices_async(tickers_to_fetch, access_token))
             
             current_data = []
-            for stock_name, ticker in valid_stocks:
-                info = price_dict.get(ticker, {"price": "0", "diff": "-"})
+            base_total_value = 0
+            current_total_value = 0
+            
+            for stock_name, ticker, _ in valid_stocks:
+                info = price_dict.get(ticker, {"price": 0, "prev_price": 0, "diff": "-", "marcap": 0})
+                p = info["price"]
+                prev_p = info["prev_price"]
+                m = info["marcap"]
+                
+                weight = m if m > 0 else 1 
+                if prev_p > 0:
+                    base_total_value += weight
+                    current_total_value += weight * (p / prev_p)
+                    
                 current_data.append({
                     "종목명": stock_name,
                     "종목코드": ticker,
-                    "종가(원)": info["price"],
+                    "종가(원)": f"{p:,}" if p > 0 else "0",
                     "전일대비": info["diff"]
                 })
+                
+            if base_total_value > 0:
+                nxt_index = (current_total_value / base_total_value) * 1000
+                index_diff = nxt_index - 1000
+                index_pct = (index_diff / 1000) * 100
+            else:
+                nxt_index, index_diff, index_pct = 1000, 0, 0
+                
+            with index_placeholder.container():
+                st.metric(label="🚀 커스텀 NXT 지수 (Base: 전일종가 = 1000 pt)", 
+                          value=f"{nxt_index:,.2f} pt", 
+                          delta=f"{index_diff:+,.2f} pt ({index_pct:+.2f}%)")
         
-        with placeholder.container():
+        with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
