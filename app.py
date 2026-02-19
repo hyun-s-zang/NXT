@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
+import os
 from datetime import datetime, timedelta, timezone
 
 # 웹 페이지 설정
@@ -33,7 +34,7 @@ def get_access_token():
         return res.json()["access_token"]
     return None
 
-# 2. 실시간 현재가/종가 조회 함수
+# 2. 실시간 현재가/종가 및 전일대비 조회 함수
 def get_kis_current_price(ticker, token):
     url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
     headers = {
@@ -51,73 +52,88 @@ def get_kis_current_price(ticker, token):
     if res.status_code == 200:
         data = res.json()
         if data['rt_cd'] == '0':
-            return int(data['output']['stck_prpr'])
-    return 0
+            price = int(data['output']['stck_prpr'])       # 현재가
+            diff = int(data['output']['prdy_vrss'])        # 전일 대비 절대값
+            sign = data['output']['prdy_vrss_sign']        # 전일 대비 부호
+            
+            # 부호에 따른 기호 설정 (1,2: 상승 / 4,5: 하락 / 3: 보합)
+            if sign in ['1', '2']:
+                diff_str = f"▲ {diff:,}"
+            elif sign in ['4', '5']:
+                diff_str = f"▼ {diff:,}"
+            else:
+                diff_str = "-"
+                
+            return price, diff_str
+    return 0, "-"
 
 # --- 메인 웹 화면 로직 ---
-uploaded_file = st.file_uploader("'지겹다_완성.xlsx' 파일을 업로드 해주세요.", type=["xlsx"])
+default_excel_file = "지겹다_완성.xlsx"
 
-if uploaded_file is not None:
-    st.success("파일 업로드 완료! 데이터를 분석합니다...")
+# 사용자가 새 파일을 올리면 그걸 쓰고, 안 올리면 GitHub에 있는 기본 파일을 사용합니다.
+uploaded_file = st.file_uploader("새로운 종목 리스트로 갱신하려면 엑셀 파일을 업로드하세요. (기본 파일 사용 시 무시)", type=["xlsx"])
+file_to_read = uploaded_file if uploaded_file is not None else default_excel_file
+
+# GitHub에 엑셀 파일이 잘 올라가 있는지 확인
+if not os.path.exists(default_excel_file) and uploaded_file is None:
+    st.error("기본 엑셀 파일('지겹다_완성.xlsx')을 찾을 수 없습니다. GitHub 저장소에 파일을 업로드해 주세요.")
+    st.stop()
+
+# 엑셀 데이터 안전하게 읽기
+try:
+    df = pd.read_excel(file_to_read, sheet_name=0)
+    stock_data = df.iloc[:, [2, 3]].dropna()
+    stock_list = stock_data.values.tolist()
+except Exception as e:
+    st.error(f"엑셀 데이터를 읽는 중 문제가 발생했습니다: {e}")
+    st.stop()
+
+if len(stock_list) == 0:
+    st.warning("엑셀에서 종목명과 티커를 찾을 수 없습니다.")
+    st.stop()
+
+access_token = get_access_token()
+
+if access_token:
+    KST = timezone(timedelta(hours=9))
+    now = datetime.now(KST)
+    is_market_open = (9 <= now.hour < 20)
     
-    # 엑셀 데이터 안전하게 읽기
-    try:
-        df = pd.read_excel(uploaded_file, sheet_name=0)
-        # C열(인덱스 2), D열(인덱스 3) 추출 및 빈칸 제거
-        stock_data = df.iloc[:, [2, 3]].dropna()
-        stock_list = stock_data.values.tolist()
-    except Exception as e:
-        st.error(f"엑셀 데이터를 읽는 중 문제가 발생했습니다: {e}")
-        st.stop()
-
-    if len(stock_list) == 0:
-        st.warning("엑셀에서 종목명과 티커를 찾을 수 없습니다. 파일 양식을 확인해 주세요.")
-        st.stop()
-
-    access_token = get_access_token()
+    placeholder = st.empty()
     
-    if access_token:
-        # 한국 시간(KST) 기준 현재 시간 확인
-        KST = timezone(timedelta(hours=9))
-        now = datetime.now(KST)
-        
-        # 주식시장 개장 여부 판단 (아침 9시 ~ 저녁 8시)
-        is_market_open = (9 <= now.hour < 20)
-        
-        placeholder = st.empty()
-        
-        if is_market_open:
-            st.info(f"🟢 현재 장 중입니다. 총 {len(stock_list)}개 종목의 체결가를 5초 단위로 갱신합니다.")
-            while True:
-                current_data = []
-                for stock_name, ticker in stock_list:
-                    if str(ticker) != "검색불가":
-                        clean_ticker = str(ticker).zfill(6)
-                        current_price = get_kis_current_price(clean_ticker, access_token)
-                        current_data.append({
-                            "종목명": stock_name,
-                            "종목코드": clean_ticker,
-                            "현재가(원)": f"{current_price:,}"
-                        })
-                with placeholder.container():
-                    st.dataframe(pd.DataFrame(current_data), use_container_width=True)
-                time.sleep(5)
-                
-        else:
-            st.error(f"🔴 현재는 장 마감 시간입니다. (현재 시각: {now.strftime('%H:%M')})")
-            st.write(f"총 {len(stock_list)}개 종목의 **최종 종가** 기준으로 데이터를 1회 불러옵니다.")
-            
+    if is_market_open:
+        st.info(f"🟢 현재 장 중입니다. 총 {len(stock_list)}개 종목을 5초 단위로 갱신합니다.")
+        while True:
             current_data = []
             for stock_name, ticker in stock_list:
                 if str(ticker) != "검색불가":
                     clean_ticker = str(ticker).zfill(6)
-                    current_price = get_kis_current_price(clean_ticker, access_token)
+                    current_price, diff_str = get_kis_current_price(clean_ticker, access_token)
                     current_data.append({
                         "종목명": stock_name,
                         "종목코드": clean_ticker,
-                        "종가(원)": f"{current_price:,}"
+                        "현재가(원)": f"{current_price:,}",
+                        "전일대비": diff_str
                     })
-            
-            # 장 마감일 때는 무한 루프(while) 없이 표를 딱 한 번만 그려줍니다.
             with placeholder.container():
                 st.dataframe(pd.DataFrame(current_data), use_container_width=True)
+            time.sleep(5)
+            
+    else:
+        st.error(f"🔴 현재는 장 마감 시간입니다. (현재 시각: {now.strftime('%H:%M')})")
+        st.write(f"총 {len(stock_list)}개 종목의 **최종 종가** 기준으로 데이터를 1회 불러옵니다.")
+        
+        current_data = []
+        for stock_name, ticker in stock_list:
+            if str(ticker) != "검색불가":
+                clean_ticker = str(ticker).zfill(6)
+                current_price, diff_str = get_kis_current_price(clean_ticker, access_token)
+                current_data.append({
+                    "종목명": stock_name,
+                    "종목코드": clean_ticker,
+                    "종가(원)": f"{current_price:,}",
+                    "전일대비": diff_str
+                })
+        
+        with placeholder.container():
+            st.dataframe(pd.DataFrame(current_data), use_container_width=True)
