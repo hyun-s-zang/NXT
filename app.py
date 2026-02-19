@@ -64,7 +64,7 @@ if uploaded_file is not None:
     st.success("파일 업로드 완료! 데이터를 실시간으로 불러옵니다...")
     
     # 엑셀 데이터 읽기
-    df = pd.read_excel(uploaded_file, sheet_name='sheet1')
+    df = pd.read_excel(uploaded_file, sheet_name=0)
     
     # C열(인덱스 2: 종목명), D열(인덱스 3: 티커) 추출 (NaN 제외)
     df = df[df.iloc[:, 3].notnull()]
@@ -96,4 +96,5 @@ if uploaded_file is not None:
             with placeholder.container():
                 st.dataframe(pd.DataFrame(current_data), use_container_width=True)
             
+
             time.sleep(5) # 5초 대기
