@@ -209,20 +209,18 @@ def run_asyncio_loop(approval_key):
 
 
 # ==========================================
-# [7. 메인 UI 렌더링 및 루프]
+# [7. 메인 UI 렌더링 및 루프] (수정: 변동률 추가 및 색상 스타일링)
 # ==========================================
 approval_key = get_approval_key()
 access_token = get_access_token() # REST API용 토큰 추가 발급
 
 if approval_key and access_token:
     
-    # ⭐ [핵심] 웹소켓을 켜기 전, 최초 1회만 REST API로 전체 종가를 불러옵니다.
     if 'initial_fetch_done' not in st.session_state:
         with st.spinner("최근 종가 데이터를 불러오는 중입니다... 잠시만 기다려주세요."):
             fetch_initial_prices(access_token)
         st.session_state.initial_fetch_done = True
 
-    # 최초 1회만 백그라운드 웹소켓 스레드 실행
     if 'ws_thread_started' not in st.session_state:
         t = threading.Thread(target=run_asyncio_loop, args=(approval_key,), daemon=True)
         t.start()
@@ -245,11 +243,25 @@ if approval_key and access_token:
             base_total += m
             current_total += m * (p / prev_p if p > 0 else 1)
         
+        # ⭐ [수정됨] 변동액 및 변동률(%) 계산 로직
+        if p > 0 and prev_p > 0:
+            diff_val = p - prev_p
+            pct_change = (diff_val / prev_p) * 100
+            
+            if diff_val > 0:
+                diff_str = f"▲ {diff_val:,} (+{pct_change:.2f}%)"
+            elif diff_val < 0:
+                diff_str = f"▼ {abs(diff_val):,} ({pct_change:.2f}%)"
+            else:
+                diff_str = "0 (0.00%)"
+        else:
+            diff_str = "대기 중"
+            
         display_list.append({
             "종목명": s['name'],
             "종목코드": s['ticker'],
             "현재가(NXT)": f"{p:,}" if p > 0 else "대기 중",
-            "전일대비": info['diff']
+            "전일대비": diff_str
         })
 
     if base_total > 0:
@@ -263,7 +275,21 @@ if approval_key and access_token:
               value=f"{nxt_index:,.2f} pt", 
               delta=f"{index_diff:+,.2f} pt ({index_pct:+.2f}%)")
 
-    st.dataframe(pd.DataFrame(display_list), width='stretch')
+    # ⭐ [수정됨] Pandas Styler를 활용한 상승(적색)/하락(청색) 색상 지정 함수
+    def color_diff_column(val):
+        if isinstance(val, str):
+            if '▲' in val:
+                return 'color: #ff4b4b; font-weight: bold;' # Streamlit 기본 붉은색
+            elif '▼' in val:
+                return 'color: #0068c9; font-weight: bold;' # Streamlit 기본 파란색
+        return ''
+
+    # 데이터프레임 생성 및 스타일 적용
+    df_display = pd.DataFrame(display_list)
+    styled_df = df_display.style.map(color_diff_column, subset=['전일대비'])
+
+    # 스타일이 적용된 데이터프레임 출력
+    st.dataframe(styled_df, width='stretch')
 
     time.sleep(1)
     st.rerun()
