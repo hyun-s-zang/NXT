@@ -209,7 +209,7 @@ def run_asyncio_loop(approval_key):
 
 
 # ==========================================
-# [7. 메인 UI 렌더링 및 루프] (수정: 변동률 추가 및 색상 스타일링)
+# [7. 메인 UI 렌더링 및 루프] (수정: 종목코드 숨김 및 볼드체 해제)
 # ==========================================
 approval_key = get_approval_key()
 access_token = get_access_token() # REST API용 토큰 추가 발급
@@ -243,7 +243,7 @@ if approval_key and access_token:
             base_total += m
             current_total += m * (p / prev_p if p > 0 else 1)
         
-        # ⭐ [수정됨] 변동액 및 변동률(%) 계산 로직
+        # 변동액 및 변동률(%) 계산 로직
         if p > 0 and prev_p > 0:
             diff_val = p - prev_p
             pct_change = (diff_val / prev_p) * 100
@@ -257,9 +257,9 @@ if approval_key and access_token:
         else:
             diff_str = "대기 중"
             
+        # ⭐ [수정됨] 데이터 리스트에서 '종목코드' 항목 삭제
         display_list.append({
             "종목명": s['name'],
-            "종목코드": s['ticker'],
             "현재가(NXT)": f"{p:,}" if p > 0 else "대기 중",
             "전일대비": diff_str
         })
@@ -275,21 +275,30 @@ if approval_key and access_token:
               value=f"{nxt_index:,.2f} pt", 
               delta=f"{index_diff:+,.2f} pt ({index_pct:+.2f}%)")
 
-    # ⭐ [수정됨] Pandas Styler를 활용한 상승(적색)/하락(청색) 색상 지정 함수
+    # ⭐ [수정됨] 볼드체(font-weight: bold;) 제거
     def color_diff_column(val):
         if isinstance(val, str):
             if '▲' in val:
-                return 'color: #ff4b4b; font-weight: bold;' # Streamlit 기본 붉은색
+                return 'color: #ff4b4b;' 
             elif '▼' in val:
-                return 'color: #0068c9; font-weight: bold;' # Streamlit 기본 파란색
+                return 'color: #0068c9;'
         return ''
 
     # 데이터프레임 생성 및 스타일 적용
     df_display = pd.DataFrame(display_list)
     styled_df = df_display.style.map(color_diff_column, subset=['전일대비'])
 
-    # 스타일이 적용된 데이터프레임 출력
-    st.dataframe(styled_df, width='stretch')
+    # ⭐ [수정됨] 종목코드 컬럼 설정을 제외하고 헤더 및 너비 최적화 유지
+    st.dataframe(
+        styled_df,
+        use_container_width=True, 
+        hide_index=True,          
+        column_config={
+            "종목명": st.column_config.TextColumn("종목명", width="medium"),
+            "현재가(NXT)": st.column_config.TextColumn("현재가", width="small"), 
+            "전일대비": st.column_config.TextColumn("전일대비", width="large")  
+        }
+    )
 
     time.sleep(1)
     st.rerun()
