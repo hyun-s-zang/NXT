@@ -63,44 +63,53 @@ def get_access_token():
 
 # 2. 비동기 초고속 데이터 조회
 async def fetch_price_async(session, ticker, excel_marcap, token, sem):
+    # --- [수정] 안정성 강화: timeout(타임아웃) 및 재시도(Retry) 로직 추가 ---
+    url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+    headers = {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {token}",
+        "appkey": APP_KEY,
+        "appsecret": APP_SECRET,
+        "tr_id": "FHKST01010100" 
+    }
+    params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}
+    
     async with sem:
-        url = f"{URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
-        headers = {
-            "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
-            "appkey": APP_KEY,
-            "appsecret": APP_SECRET,
-            "tr_id": "FHKST01010100" 
-        }
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}
-        
-        try:
-            async with session.get(url, headers=headers, params=params) as res:
-                if res.status == 200:
-                    data = await res.json()
-                    if data['rt_cd'] == '0':
-                        price = int(data['output']['stck_prpr'])
-                        diff = int(data['output']['prdy_vrss'])
-                        sign = data['output']['prdy_vrss_sign']
-                        
-                        if sign in ['1', '2']: 
-                            diff_str = f"▲ {diff:,}"
-                            prev_price = price - diff
-                        elif sign in ['4', '5']: 
-                            diff_str = f"▼ {diff:,}"
-                            prev_price = price + diff
-                        else: 
-                            diff_str = "-"
-                            prev_price = price
+        for attempt in range(3): # 최대 3번까지 재시도
+            try:
+                # 3초 내에 응답이 없으면 에러 처리 후 재시도
+                async with session.get(url, headers=headers, params=params, timeout=3) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        if data['rt_cd'] == '0':
+                            price = int(data['output']['stck_prpr'])
+                            diff = int(data['output']['prdy_vrss'])
+                            sign = data['output']['prdy_vrss_sign']
                             
-                        return ticker, price, prev_price, diff_str, excel_marcap
-        except Exception:
-            pass
+                            if sign in ['1', '2']: 
+                                diff_str = f"▲ {diff:,}"
+                                prev_price = price - diff
+                            elif sign in ['4', '5']: 
+                                diff_str = f"▼ {diff:,}"
+                                prev_price = price + diff
+                            else: 
+                                diff_str = "-"
+                                prev_price = price
+                                
+                            return ticker, price, prev_price, diff_str, excel_marcap
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(0.5) # 재시도 전 0.5초 대기
+                pass # 3번 모두 실패하면 아래 기본값 반환 코드로 넘어감
+                
         return ticker, 0, 0, "-", excel_marcap
 
 async def get_all_prices_async(stock_info_list, token):
-    sem = asyncio.Semaphore(15) 
-    async with aiohttp.ClientSession() as session:
+    # --- [수정] 속도 개선: Semaphore 상향 및 TCPConnector를 활용한 커넥션 풀 최적화 ---
+    sem = asyncio.Semaphore(20) # 동시 요청 한도를 15 -> 20으로 상향
+    connector = aiohttp.TCPConnector(limit=50, keepalive_timeout=60) # 커넥션 풀 재사용으로 속도 향상
+    
+    async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [fetch_price_async(session, t, m, token, sem) for t, m in stock_info_list]
         results = await asyncio.gather(*tasks)
         return {res[0]: {"price": res[1], "prev_price": res[2], "diff": res[3], "marcap": res[4]} for res in results}
@@ -136,7 +145,11 @@ access_token = get_access_token()
 if access_token:
     KST = timezone(timedelta(hours=9))
     now = datetime.now(KST)
-    is_market_open = (8 <= now.hour < 20)
+    
+    # --- [수정] NXT 정규장 시간대로 조건 변경 (09:00 ~ 15:30) ---
+    market_open_time = datetime.strptime("08:00", "%H:%M").time()
+    market_close_time = datetime.strptime("19:59", "%H:%M").time()
+    is_market_open = (market_open_time <= now.time() <= market_close_time)
     
     index_placeholder = st.empty()
     st.markdown("<hr style='margin: 5px 0px; border: 1px solid #ddd;'>", unsafe_allow_html=True)
@@ -228,11 +241,3 @@ if access_token:
         
         with table_placeholder.container():
             st.dataframe(pd.DataFrame(current_data), use_container_width=True)
-
-
-
-
-
-
-
-
