@@ -136,22 +136,21 @@ def fetch_initial_prices(token):
 
 
 # ==========================================
-# [5. 웹소켓 비동기 처리 함수] (수정: ping_interval 해제 및 자동 재연결)
+# [5. 웹소켓 비동기 처리 함수] (수정됨: TR_ID 및 데이터 파싱 로직)
 # ==========================================
 async def nxt_websocket_handler(approval_key):
-    # 🔁 서버가 끊어버려도 다시 연결을 시도하는 무한 루프를 겉에 씌웁니다.
     while True: 
         try:
             shared_state["ws_status"] = "🔄 서버 연결 시도 중..."
             
-            # ⭐ 핵심: ping_interval=None 으로 설정하여 라이브러리 충돌을 막습니다.
             async with websockets.connect(WS_URL, ping_interval=None) as ws:
                 shared_state["ws_status"] = "✅ 서버 연결 성공, 구독 요청 중..."
                 
                 for stock in valid_stocks:
                     send_data = {
                         "header": {"approval_key": approval_key, "custtype": "P", "tr_type": "1", "content-type": "utf-8"},
-                        "body": {"input": {"tr_id": "H0NXSTC0", "tr_key": stock['ticker']}}
+                        # ⭐ 수정 1: 국내주식 실시간 체결가 TR_ID인 'H0STCNT0'로 변경
+                        "body": {"input": {"tr_id": "H0STCNT0", "tr_key": stock['ticker']}}
                     }
                     await ws.send(json.dumps(send_data))
                     await asyncio.sleep(0.1) 
@@ -167,38 +166,48 @@ async def nxt_websocket_handler(approval_key):
                         if tr_id == "PINGPONG": continue 
                         msg = parsed.get("body", {}).get("msg1", "")
                         
-                        # 중복 접속일 때만 아예 무한 루프를 탈출(완전 종료)합니다.
                         if "ALREADY IN USE" in msg:
                             shared_state["ws_status"] = "❌ 중복 접속 에러 (모든 창 닫고 5분 대기)"
                             return 
                         continue
                         
+                    # 실시간 체결 데이터 수신 처리
                     if data[0] in ['0', '1']: 
                         parts = data.split('|')
                         content = parts[-1].split('^')
+                        
+                        # ⭐ 수정 2: KIS API 규격에 맞는 정확한 데이터 인덱싱
                         if len(content) > 4:
-                            ticker = parts[3]
-                            current_price = int(content[2])
-                            diff = int(content[4])
-                            sign = content[3]
+                            ticker = content[0]             # 종목코드
+                            current_price = int(content[1]) # 주식 현재가
+                            sign = content[2]               # 전일대비 부호
+                            diff = int(content[3])          # 전일대비 금액
                             
-                            diff_prefix = "▲" if sign in ['1', '2'] else "▼" if sign in ['4', '5'] else ""
-                            prev_price = current_price - diff if sign in ['1', '2'] else current_price + diff if sign in ['4', '5'] else current_price
+                            # 구독한 종목코드인지 확인 후 상태 업데이트
+                            if ticker in shared_state["prices"]:
+                                diff_prefix = "▲" if sign in ['1', '2'] else "▼" if sign in ['4', '5'] else ""
+                                
+                                # 이전가(prev_price) 역산 로직
+                                if sign in ['1', '2']:     # 상승
+                                    prev_price = current_price - diff
+                                elif sign in ['4', '5']:   # 하락
+                                    prev_price = current_price + diff
+                                else:                      # 보합
+                                    prev_price = current_price
+                                
+                                shared_state["prices"][ticker] = {
+                                    "price": current_price,
+                                    "diff": f"{diff_prefix} {diff:,}" if diff != 0 else "0",
+                                    "prev": prev_price
+                                }
                             
-                            shared_state["prices"][ticker] = {
-                                "price": current_price,
-                                "diff": f"{diff_prefix} {diff:,}",
-                                "prev": prev_price
-                            }
-                            
-        # ⚠️ 전화가 뚝 끊기면 당황하지 않고 3초 쉬었다가 윗부분(while True)으로 돌아가 재연결!
         except websockets.exceptions.ConnectionClosedError:
             shared_state["ws_status"] = "⚠️ 서버 끊김 (3초 뒤 자동 재연결...)"
             await asyncio.sleep(3)
         except Exception as e:
             shared_state["ws_status"] = f"⚠️ 웹소켓 에러 발생 (3초 뒤 재연결...): {e}"
             await asyncio.sleep(3)
-
+            
 # ==========================================
 # [6. 비동기 루프 실행 래퍼 함수]
 # ==========================================
@@ -305,4 +314,5 @@ if approval_key and access_token:
 
 else:
     st.error("API 키 인증에 실패했습니다. (승인키 또는 접근 토큰 발급 오류)")
+
 
